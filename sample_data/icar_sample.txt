@@ -1,0 +1,44 @@
+ICAR Advisory: Wheat Crop Management (Illustrative Sample)
+
+This is an illustrative advisory written for the starter project. It is not a
+copy of any real ICAR bulletin; replace it with genuine advisory pages when you
+go live.
+
+Yellowing of wheat leaves. Uniform yellowing of the lower, older leaves during
+the tillering and jointing stages most commonly indicates nitrogen deficiency.
+Nitrogen is mobile in the plant, so the crop pulls it from older leaves to feed
+new growth, which is why the oldest leaves yellow first. Where nitrogen
+deficiency is confirmed, a top dressing of urea at about 50 kg per acre, applied
+to moist soil and followed by light irrigation, usually restores green colour
+within seven to ten days. Avoid applying urea to a dry field, as losses through
+volatilisation are high.
+
+Distinguishing look-alike problems. Yellowing from water stress tends to appear
+first at the leaf tips and margins and worsens during the hottest part of the
+day; correcting irrigation scheduling is the remedy. Interveinal yellowing while
+the veins stay green (chlorosis) points instead to a micronutrient issue such as
+zinc or iron, and a soil test to check pH is advised before applying any
+micronutrient, because high soil pH can lock these nutrients away.
+
+Leaf rust. Small, round to oval, orange-brown pustules scattered on the upper
+leaf surface are the classic sign of leaf rust. Rust develops fastest when
+relative humidity stays above seventy percent and temperatures sit in the range
+of fifteen to twenty-five degrees Celsius, conditions that often follow a spell
+of cloudy, damp weather. Scout fields twice a week during such periods. If
+pustules are spreading, a recommended fungicide should be applied promptly, as
+rust can move quickly through a susceptible variety and cause significant yield
+loss.
+
+Harvest and storage timing. Harvest wheat when the grain is hard and moisture
+has fallen to a safe level, and always choose dry conditions for both harvesting
+and threshing. Grain stored while damp is prone to mould and to storage pests,
+so if rain is forecast it is safer to complete harvesting beforehand or to
+ensure covered, well-ventilated storage. When market prices are rising but wet
+weather is expected, farmers without proper moisture-protected storage should
+weigh the risk of storage damage against the possible gain from holding the
+crop.
+
+General guidance. Recommendations should be adjusted to local soil test results,
+the specific variety grown, and the current season. When symptoms persist after
+treatment, farmers are advised to contact their local agricultural officer for
+soil and leaf testing before applying further inputs.

@@ -1,0 +1,16 @@
+{
+  "index_name": "9ef84268-d588-465a-a308-a864a43d0070",
+  "title": "Current Daily Price of Various Commodities from Various Markets (Mandi)",
+  "desc": "SAMPLE data with the same shape as the live data.gov.in response. Values are illustrative, not real market prices.",
+  "count": 8,
+  "records": [
+    {"state": "Bihar", "district": "Patna", "market": "Patna", "commodity": "Wheat", "variety": "Dara", "grade": "FAQ", "arrival_date": "07/07/2026", "min_price": "2180", "max_price": "2260", "modal_price": "2220"},
+    {"state": "Punjab", "district": "Ludhiana", "market": "Khanna", "commodity": "Wheat", "variety": "Dara", "grade": "FAQ", "arrival_date": "07/07/2026", "min_price": "2200", "max_price": "2280", "modal_price": "2250"},
+    {"state": "Haryana", "district": "Karnal", "market": "Karnal", "commodity": "Wheat", "variety": "Other", "grade": "FAQ", "arrival_date": "07/07/2026", "min_price": "2150", "max_price": "2240", "modal_price": "2200"},
+    {"state": "Uttar Pradesh", "district": "Kanpur", "market": "Kanpur", "commodity": "Wheat", "variety": "Dara", "grade": "FAQ", "arrival_date": "07/07/2026", "min_price": "2120", "max_price": "2230", "modal_price": "2190"},
+    {"state": "Madhya Pradesh", "district": "Indore", "market": "Indore", "commodity": "Soybean", "variety": "Yellow", "grade": "FAQ", "arrival_date": "07/07/2026", "min_price": "4100", "max_price": "4600", "modal_price": "4350"},
+    {"state": "Maharashtra", "district": "Pune", "market": "Pune", "commodity": "Onion", "variety": "Local", "grade": "FAQ", "arrival_date": "07/07/2026", "min_price": "1400", "max_price": "2800", "modal_price": "2100"},
+    {"state": "Rajasthan", "district": "Kota", "market": "Kota", "commodity": "Mustard", "variety": "Lohi Black", "grade": "FAQ", "arrival_date": "07/07/2026", "min_price": "5200", "max_price": "5800", "modal_price": "5500"},
+    {"state": "West Bengal", "district": "Purba Bardhaman", "market": "Bardhaman", "commodity": "Rice", "variety": "Common", "grade": "FAQ", "arrival_date": "07/07/2026", "min_price": "2400", "max_price": "3100", "modal_price": "2750"}
+  ]
+}
