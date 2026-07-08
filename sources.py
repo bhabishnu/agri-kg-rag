@@ -36,7 +36,7 @@ def fetch_agmarknet(api_key, limit=50, use_sample=False,
     else:
         url = f"{config.DATA_GOV_BASE}/{config.DATA_GOV_RESOURCE_ID}"
         params = {"api-key": api_key, "format": "json", "limit": limit}
-        resp = requests.get(url, params=params, timeout=30)
+        resp = requests.get(url, params=params, timeout=120)
         resp.raise_for_status()
         raw = resp.json()
 

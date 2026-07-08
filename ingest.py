@@ -82,7 +82,7 @@ def main():
 
     # --- Source 1: Agmarknet prices ---
     print(f"\n[1/3] Fetching Agmarknet prices  {'(sample)' if use_sample else '(LIVE)'}")
-    prices = sources.fetch_agmarknet(api_key, limit=50, use_sample=use_sample)
+    prices = sources.fetch_agmarknet(api_key, limit=10, use_sample=use_sample)
     price_docs = build_docs_from_prices(prices)
     print(f"      {len(prices)} price rows -> {len(price_docs)} docs")
 
