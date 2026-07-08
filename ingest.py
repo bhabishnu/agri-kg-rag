@@ -68,6 +68,33 @@ def build_docs_from_icar(text, doc_title="ICAR wheat advisory"):
     return docs
 
 
+def build_docs_from_pdf(text, source_url, doc_title="ICAR advisory PDF"):
+    """PDF advisory text -> cleaned -> chunked -> one doc per chunk.
+
+    Mirrors build_docs_from_icar; the only extra field is `source_url`, so a
+    retrieved chunk can be traced back to the exact PDF it came from.
+    """
+    src = config.SOURCES["icar_pdf"]
+    chunks = pipeline.chunk_text(pipeline.clean_text(text))
+    docs = []
+    for i, chunk in enumerate(chunks):
+        docs.append({
+            "id": f"icar_pdf::{uuid.uuid4().hex[:12]}",
+            "text": chunk,
+            "metadata": {
+                "source": "icar_pdf",
+                "source_name": src["name"],
+                "reliability": src["reliability"],
+                "type": src["type"],
+                "doc_title": doc_title,
+                "source_url": source_url,
+                "chunk_index": i,
+                "ingested_at": _now(),
+            },
+        })
+    return docs
+
+
 def main():
     use_sample = os.environ.get("USE_SAMPLE", "1") == "1"
     api_key = os.environ.get("DATA_GOV_API_KEY", "")

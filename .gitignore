@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 .env
 chroma_db/
+cache/
 .DS_Store

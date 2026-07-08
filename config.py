@@ -28,7 +28,18 @@ SOURCES = {
         "type": "advisory",
         "url": "https://icar.org.in",
     },
+    "icar_pdf": {
+        "name": "ICAR advisory PDFs",
+        "reliability": 0.98,          # same official body, PDF publications
+        "type": "advisory",
+        "url": "https://icar.org.in",
+    },
 }
+
+# ---------------------------------------------------------------------------
+# PDF cache (downloaded advisory PDFs are stored here so we don't refetch)
+# ---------------------------------------------------------------------------
+PDF_CACHE_DIR = "./cache"
 
 # ---------------------------------------------------------------------------
 # data.gov.in (Agmarknet) API
