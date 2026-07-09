@@ -10,11 +10,14 @@ Point it at any of three page shapes on an OJS-based ICAR journal
   * an ARTICLE page /article/view/{id}               -> that article's PDF
   * a direct GALLEY /article/view/{id}/{galleyId}    -> that PDF directly
 
-The real PDF lives at the *galley* URL `/article/view/{id}/{galleyId}` (NOT an
-`/article/download/` link). So we resolve inputs down to galley URLs first:
-an issue page is scraped for its `/article/view/{id}` article links, and each
-article page is scraped for its "PDF" galley link. Each resolved galley URL then
-runs through the SAME path demo_pdf.py uses for a single file:
+The galley URL `/article/view/{id}/{galleyId}` is an HTML *viewer* shell, not the
+PDF; the real bytes live at the sibling `/article/download/{id}/{galleyId}`. So we
+resolve inputs down to galley view URLs first (an issue page is scraped for its
+`/article/view/{id}` article links, and each article page for its "PDF" galley
+link), then for each one fetch the `/article/download/` URL for the actual PDF.
+If even that returns HTML, we fall back to scraping the viewer page for an
+embedded PDF link (an iframe/embed src, or a link ending in .pdf / containing
+/download/). The bytes then run through the SAME path demo_pdf.py uses:
 pdf_sources.load_pdf_text (download + cache + extract + clean) ->
 ingest.build_docs_from_pdf -> pipeline upsert.
 
@@ -141,6 +144,57 @@ def resolve_galley_urls(url):
     return [galley] if galley else []
 
 
+def find_embedded_pdf_link(viewer_url):
+    """Fallback for when the `/download/` URL itself serves HTML.
+
+    Scrape the galley viewer page for the real PDF: an `<iframe>`/`<embed>` whose
+    `src` points at it, or an `<a>` link ending in `.pdf` or going through
+    `/download/`. Returns the first match (absolute URL), or None.
+    """
+    soup = _fetch_soup(viewer_url)
+
+    def is_pdf_link(full):
+        return full.lower().split("?")[0].endswith(".pdf") or "/download/" in full
+
+    for tag in soup.find_all(["iframe", "embed"]):
+        src = tag.get("src")
+        if src:
+            full = urljoin(viewer_url, src)
+            if is_pdf_link(full):
+                return full
+
+    for a in soup.find_all("a", href=True):
+        full = urljoin(viewer_url, a["href"])
+        if is_pdf_link(full):
+            return full
+
+    return None
+
+
+def load_galley_text(view_url):
+    """Download + extract the PDF for a galley VIEW url via its `/download/` URL.
+
+    `/article/view/{a}/{g}` is an HTML viewer shell, not the PDF, so we fetch the
+    sibling `/article/download/{a}/{g}` for the actual bytes. If even that serves
+    HTML (Content-Type guard trips in pdf_sources), we fall back to scraping the
+    viewer page for an embedded PDF link and try that. Returns extracted text, or
+    None if no PDF link could be found. Logs each URL it tries.
+    """
+    download_url = view_url.replace("/article/view/", "/article/download/")
+    print(f"      download: {download_url}")
+    try:
+        return pdf_sources.load_pdf_text(download_url)
+    except pdf_sources.NotAPdfError as e:
+        print(f"      download URL not a PDF ({e}); scraping viewer for an embedded PDF link…")
+
+    embedded = find_embedded_pdf_link(view_url)
+    if not embedded:
+        print("      WARNING: no embedded PDF link found in viewer page.")
+        return None
+    print(f"      embedded: {embedded}")
+    return pdf_sources.load_pdf_text(embedded)
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python crawl_icar.py <url>")
@@ -157,12 +211,20 @@ def main():
     coll = pipeline.get_collection()
     ingested, skipped = 0, 0
 
-    for i, url in enumerate(pdf_urls, 1):
-        print(f"[{i}/{len(pdf_urls)}] {url}")
+    for i, view_url in enumerate(pdf_urls, 1):
+        print(f"[{i}/{len(pdf_urls)}] {view_url}")
         try:
-            text = pdf_sources.load_pdf_text(url)
+            text = load_galley_text(view_url)
+        except pdf_sources.NotAPdfError as e:  # HTML/other where we expected a PDF
+            print(f"      WARNING: not a PDF ({e}) — skipping.")
+            skipped += 1
+            continue
         except Exception as e:  # network error, corrupt PDF, etc. — skip, don't crash
             print(f"      WARNING: failed to download/extract ({e}) — skipping.")
+            skipped += 1
+            continue
+
+        if text is None:  # no PDF link found even after the viewer-page fallback
             skipped += 1
             continue
 
@@ -171,7 +233,7 @@ def main():
             skipped += 1
             continue
 
-        docs = ingest.build_docs_from_pdf(text, source_url=url)
+        docs = ingest.build_docs_from_pdf(text, source_url=view_url)
         pipeline.add_documents(coll, docs)
         print(f"      ingested {len(docs)} chunk(s).")
         ingested += 1

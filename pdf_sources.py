@@ -12,15 +12,23 @@ doesn't re-fetch the same file over the network every time.
 
 import os
 import hashlib
-from urllib.parse import urljoin
 
 import requests
-from bs4 import BeautifulSoup
 
 import config
 
 
 USER_AGENT = "Mozilla/5.0 (M.Tech research project)"
+
+
+class NotAPdfError(ValueError):
+    """Raised when a URL we expected to serve a PDF returns something else.
+
+    On epubs.icar.org.in the PDF galley URL `/article/view/{id}/{galleyId}`
+    returns the PDF bytes directly. If it instead returns HTML (a viewer shell,
+    an error page, a login wall), we refuse to treat it as a PDF so we never
+    ingest garbage — the caller logs it and skips.
+    """
 
 
 def _cache_path_for(url):
@@ -43,54 +51,24 @@ def _looks_like_pdf(resp):
     return "application/pdf" in ctype or resp.content[:5] == b"%PDF-"
 
 
-def _find_embedded_pdf(html, base_url):
-    """Given an HTML viewer page, return the URL of the PDF it embeds, or None.
-
-    OJS galley "view" pages sometimes serve an HTML shell that embeds the real
-    PDF via an <embed>/<iframe> (typically an `/article/download/...` URL) or
-    links to it. We resolve the first such reference against the page URL.
-    """
-    soup = BeautifulSoup(html, "lxml")
-
-    for tag, attr in (("embed", "src"), ("iframe", "src")):
-        for node in soup.find_all(tag):
-            ref = node.get(attr)
-            if ref and ("/download/" in ref or ".pdf" in ref.lower()):
-                return urljoin(base_url, ref)
-
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if "/download/" in href or href.lower().endswith(".pdf"):
-            return urljoin(base_url, href)
-
-    return None
-
-
 def _fetch_pdf_bytes(url):
-    """Fetch `url` and return PDF bytes, following an HTML viewer to the real PDF.
+    """Fetch `url` and return PDF bytes, verifying it really is a PDF.
 
-    If the URL returns a PDF, we use it. If it returns HTML (a galley viewer
-    page), we look for the embedded PDF link and fetch that instead. Anything
-    else is an error the caller reports and skips.
+    On this site the galley URL `/article/view/{id}/{galleyId}` serves the PDF
+    bytes directly, so we fetch once and check the response is a PDF (by
+    Content-Type, with a `%PDF-` magic-byte fallback for sloppy servers). We do
+    NOT chase `/download/` or embedded links — those don't exist here, and
+    guessing at them is how the old code ended up ingesting HTML. If the
+    response is HTML/anything else, we raise NotAPdfError so the caller skips.
     """
     headers = {"User-Agent": USER_AGENT}
     resp = requests.get(url, timeout=120, headers=headers)
     resp.raise_for_status()
 
-    if _looks_like_pdf(resp):
-        return resp.content
-
-    pdf_url = _find_embedded_pdf(resp.text, resp.url)
-    if not pdf_url:
-        ctype = resp.headers.get("Content-Type", "") or "unknown"
-        raise ValueError(
-            f"expected a PDF but got {ctype} and found no embedded PDF link"
-        )
-
-    resp = requests.get(pdf_url, timeout=120, headers=headers)
-    resp.raise_for_status()
     if not _looks_like_pdf(resp):
-        raise ValueError(f"embedded link {pdf_url} did not return a PDF")
+        ctype = resp.headers.get("Content-Type", "") or "unknown"
+        raise NotAPdfError(f"expected a PDF but server returned Content-Type '{ctype}'")
+
     return resp.content
 
 
