@@ -1,14 +1,19 @@
 """
 Crawl an ICAR journal page and ingest every article PDF it links to.
 
-    python crawl_icar.py <url>
+    python crawl_icar.py <url> [--limit N]
 
-Point it at any of three page shapes on an OJS-based ICAR journal
+Point it at any of four page shapes on an OJS-based ICAR journal
 (epubs.icar.org.in, e.g. "Indian Farming"):
 
+  * an ARCHIVE page /issue/archive                   -> every issue, newest first
   * an ISSUE page   /issue/view/{id}                 -> every article in the issue
   * an ARTICLE page /article/view/{id}               -> that article's PDF
   * a direct GALLEY /article/view/{id}/{galleyId}    -> that PDF directly
+
+The archive lists issues newest-first; `--limit N` takes only the newest N
+issues (default: all). Each issue is then crawled through the same
+issue -> article -> PDF-download path as a lone /issue/view/ URL.
 
 The galley URL `/article/view/{id}/{galleyId}` is an HTML *viewer* shell, not the
 PDF; the real bytes live at the sibling `/article/download/{id}/{galleyId}`. So we
@@ -63,6 +68,29 @@ def _fetch_soup(url):
     resp = requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT})
     resp.raise_for_status()
     return BeautifulSoup(resp.text, "lxml")
+
+
+def collect_issue_urls(archive_url, limit=None):
+    """Scrape the archive page for issue-page links (`/issue/view/{id}`).
+
+    The archive lists issues newest-first, so we preserve page order and, when
+    `limit` is given, keep only the first `limit` (newest) issues. Deduped,
+    order-preserving (the archive links the same issue by its cover and title).
+    """
+    soup = _fetch_soup(archive_url)
+
+    urls, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        full = urljoin(archive_url, a["href"])
+        if not ISSUE_RE.search(urlparse(full).path):
+            continue
+        if full not in seen:
+            seen.add(full)
+            urls.append(full)
+
+    if limit is not None:
+        urls = urls[:limit]
+    return urls
 
 
 def collect_article_urls(issue_url):
@@ -195,17 +223,60 @@ def load_galley_text(view_url):
     return pdf_sources.load_pdf_text(embedded)
 
 
+def _parse_args(argv):
+    """Pull an optional `--limit N` (or `--limit=N`) out of argv.
+
+    Returns (url, limit); url is None if no positional URL was given. `--limit`
+    only applies to archive crawls (it's ignored for other URL shapes).
+    """
+    url, limit = None, None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--limit":
+            if i + 1 >= len(argv):
+                print("Usage: --limit requires a number, e.g. --limit 5")
+                sys.exit(1)
+            limit = int(argv[i + 1])
+            i += 2
+            continue
+        if arg.startswith("--limit="):
+            limit = int(arg.split("=", 1)[1])
+            i += 1
+            continue
+        if url is None:
+            url = arg
+        i += 1
+    return url, limit
+
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python crawl_icar.py <url>")
-        print("  <url> = an /issue/view/{id}, /article/view/{id},")
+    url, limit = _parse_args(sys.argv[1:])
+    if url is None:
+        print("Usage: python crawl_icar.py <url> [--limit N]")
+        print("  <url> = an /issue/archive, /issue/view/{id}, /article/view/{id},")
         print("          or /article/view/{id}/{galleyId} page")
+        print("  --limit N = archive mode only: crawl the newest N issues")
         sys.exit(1)
 
-    url = sys.argv[1]
-
     print(f"Crawling:\n  {url}\n")
-    pdf_urls = resolve_galley_urls(url)
+
+    if "/issue/archive" in url:
+        issue_urls = collect_issue_urls(url, limit)
+        limit_note = f" (limited to newest {limit})" if limit is not None else ""
+        print(f"Found {len(issue_urls)} issue(s) in the archive{limit_note}.\n")
+        pdf_urls = []
+        for i, issue_url in enumerate(issue_urls, 1):
+            print(f"Issue [{i}/{len(issue_urls)}] {issue_url}")
+            try:
+                pdf_urls.extend(resolve_galley_urls(issue_url))
+            except Exception as e:  # one bad issue never aborts the whole run
+                print(f"  WARNING: could not crawl issue ({e}) — skipping.")
+            if i < len(issue_urls):
+                time.sleep(REQUEST_DELAY)  # be polite between issue pages
+    else:
+        pdf_urls = resolve_galley_urls(url)
+
     print(f"\nResolved {len(pdf_urls)} PDF galley URL(s).\n")
 
     coll = pipeline.get_collection()
