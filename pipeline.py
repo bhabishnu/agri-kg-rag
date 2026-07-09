@@ -109,7 +109,7 @@ def add_documents(collection, docs):
     texts = [d["text"] for d in docs]
     metas = [d["metadata"] for d in docs]
     embeddings = embed_texts(texts)
-    collection.add(ids=ids, documents=texts, embeddings=embeddings, metadatas=metas)
+    collection.upsert(ids=ids, documents=texts, embeddings=embeddings, metadatas=metas)
 
 
 def query(collection, question, n_results=3):

@@ -11,7 +11,7 @@ Environment switches:
 """
 
 import os
-import uuid
+import hashlib
 from datetime import datetime, timezone
 
 import config
@@ -23,13 +23,21 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _stable_id(prefix, key):
+    """Deterministic id from a stable identity key, so re-ingesting the same
+    document produces the same id (and upserts in place instead of duplicating)."""
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}::{digest}"
+
+
 def build_docs_from_prices(price_rows):
     """Each price row -> one doc, carrying source + reliability metadata."""
     src = config.SOURCES["agmarknet"]
     docs = []
     for p in price_rows:
+        key = "agmarknet" + (p.get("commodity") or "") + (p.get("market") or "") + (p.get("arrival_date") or "")
         docs.append({
-            "id": f"agmarknet::{uuid.uuid4().hex[:12]}",
+            "id": _stable_id("agmarknet", key),
             "text": sources.price_to_text(p),
             "metadata": {
                 "source": "agmarknet",
@@ -53,7 +61,7 @@ def build_docs_from_icar(text, doc_title="ICAR wheat advisory"):
     docs = []
     for i, chunk in enumerate(chunks):
         docs.append({
-            "id": f"icar::{uuid.uuid4().hex[:12]}",
+            "id": _stable_id("icar", doc_title + str(i)),
             "text": chunk,
             "metadata": {
                 "source": "icar",
@@ -79,7 +87,7 @@ def build_docs_from_pdf(text, source_url, doc_title="ICAR advisory PDF"):
     docs = []
     for i, chunk in enumerate(chunks):
         docs.append({
-            "id": f"icar_pdf::{uuid.uuid4().hex[:12]}",
+            "id": _stable_id("icar_pdf", source_url + str(i)),
             "text": chunk,
             "metadata": {
                 "source": "icar_pdf",
