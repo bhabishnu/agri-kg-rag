@@ -29,7 +29,7 @@ ingest.build_docs_from_pdf -> pipeline upsert.
 Re-running is safe: cache/ skips re-downloading PDFs we already have, and the
 deterministic ids in build_docs_from_pdf upsert in place instead of duplicating.
 
-Scanned/image-only PDFs (no extractable text) and any PDF that errors out are
+Scanned/image-only PDFs (no extractable text) and any PDF that errors out areIt's where the structured facts and relationships live, and it's what makes the "conflict resolution" (Agmarknet ₹2200 vs eNAM ₹2250) possible
 warned about and skipped — one bad PDF never aborts the whole run.
 
 Honors USE_DUMMY_EMBEDDINGS=1 (fake vectors, no model download) just like ingest.py.
