@@ -1,0 +1,193 @@
+"""
+Crawl an ICAR journal page and ingest every article PDF it links to.
+
+    python crawl_icar.py <url>
+
+Point it at any of three page shapes on an OJS-based ICAR journal
+(epubs.icar.org.in, e.g. "Indian Farming"):
+
+  * an ISSUE page   /issue/view/{id}                 -> every article in the issue
+  * an ARTICLE page /article/view/{id}               -> that article's PDF
+  * a direct GALLEY /article/view/{id}/{galleyId}    -> that PDF directly
+
+The real PDF lives at the *galley* URL `/article/view/{id}/{galleyId}` (NOT an
+`/article/download/` link). So we resolve inputs down to galley URLs first:
+an issue page is scraped for its `/article/view/{id}` article links, and each
+article page is scraped for its "PDF" galley link. Each resolved galley URL then
+runs through the SAME path demo_pdf.py uses for a single file:
+pdf_sources.load_pdf_text (download + cache + extract + clean) ->
+ingest.build_docs_from_pdf -> pipeline upsert.
+
+Re-running is safe: cache/ skips re-downloading PDFs we already have, and the
+deterministic ids in build_docs_from_pdf upsert in place instead of duplicating.
+
+Scanned/image-only PDFs (no extractable text) and any PDF that errors out are
+warned about and skipped — one bad PDF never aborts the whole run.
+
+Honors USE_DUMMY_EMBEDDINGS=1 (fake vectors, no model download) just like ingest.py.
+"""
+
+import re
+import sys
+import time
+from urllib.parse import urljoin, urlparse
+
+import requests
+from bs4 import BeautifulSoup
+
+import config
+import pdf_sources
+import pipeline
+import ingest
+
+
+# Same User-Agent the rest of the project uses, plus a polite pause between
+# network requests so we don't hammer the journal server.
+USER_AGENT = "Mozilla/5.0 (M.Tech research project)"
+REQUEST_DELAY = 1.0  # seconds between network requests
+
+# OJS URL shapes, matched against the path only:
+#   article page: /article/view/{id}            (one numeric segment)
+#   PDF galley:   /article/view/{id}/{galleyId} (two numeric segments)
+#   issue page:   /issue/view/{id}
+GALLEY_RE = re.compile(r"/article/view/\d+/\d+/?$")
+ARTICLE_RE = re.compile(r"/article/view/\d+/?$")
+ISSUE_RE = re.compile(r"/issue/view/\d+")
+
+
+def _fetch_soup(url):
+    """GET a page and parse it, using the project User-Agent."""
+    resp = requests.get(url, timeout=30, headers={"User-Agent": USER_AGENT})
+    resp.raise_for_status()
+    return BeautifulSoup(resp.text, "lxml")
+
+
+def collect_article_urls(issue_url):
+    """Scrape an issue page for its article-page links (`/article/view/{id}`).
+
+    Deduped, order preserving (an issue page lists the same article link more
+    than once — title, thumbnail, "PDF" button).
+    """
+    soup = _fetch_soup(issue_url)
+
+    urls, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        full = urljoin(issue_url, a["href"])
+        if not ARTICLE_RE.search(urlparse(full).path):
+            continue
+        if full not in seen:
+            seen.add(full)
+            urls.append(full)
+    return urls
+
+
+def resolve_article_galley(article_url):
+    """Scrape an article page for its PDF galley URL, or return None.
+
+    The galley link is an `<a>` whose href is `/article/view/{id}/{galleyId}`.
+    An article can carry several galleys (PDF, HTML, ...), so we prefer the one
+    labelled or classed "pdf" and only fall back to the first galley otherwise.
+    """
+    soup = _fetch_soup(article_url)
+
+    candidates, preferred = [], []
+    for a in soup.find_all("a", href=True):
+        full = urljoin(article_url, a["href"])
+        if not GALLEY_RE.search(urlparse(full).path):
+            continue
+        candidates.append(full)
+        label = (a.get_text() or "") + " " + " ".join(a.get("class") or [])
+        if "pdf" in label.lower():
+            preferred.append(full)
+
+    if preferred:
+        return preferred[0]
+    return candidates[0] if candidates else None
+
+
+def resolve_galley_urls(url):
+    """Turn any supported input URL into a list of PDF galley URLs to ingest."""
+    path = urlparse(url).path
+
+    if GALLEY_RE.search(path):
+        return [url]  # already a direct PDF galley
+
+    if ARTICLE_RE.search(path):
+        galley = resolve_article_galley(url)
+        return [galley] if galley else []
+
+    if ISSUE_RE.search(path):
+        article_urls = collect_article_urls(url)
+        print(f"Found {len(article_urls)} article page(s) in the issue.\n")
+        galleys = []
+        for i, article_url in enumerate(article_urls, 1):
+            print(f"  resolving [{i}/{len(article_urls)}] {article_url}")
+            try:
+                galley = resolve_article_galley(article_url)
+            except Exception as e:
+                print(f"      WARNING: could not resolve galley ({e}) — skipping.")
+                galley = None
+            if galley:
+                print(f"      -> {galley}")
+                galleys.append(galley)
+            else:
+                print("      WARNING: no PDF galley link found — skipping.")
+            if i < len(article_urls):
+                time.sleep(REQUEST_DELAY)  # be polite between page fetches
+        return galleys
+
+    print("WARNING: unrecognized URL shape; treating it as an article page.")
+    galley = resolve_article_galley(url)
+    return [galley] if galley else []
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python crawl_icar.py <url>")
+        print("  <url> = an /issue/view/{id}, /article/view/{id},")
+        print("          or /article/view/{id}/{galleyId} page")
+        sys.exit(1)
+
+    url = sys.argv[1]
+
+    print(f"Crawling:\n  {url}\n")
+    pdf_urls = resolve_galley_urls(url)
+    print(f"\nResolved {len(pdf_urls)} PDF galley URL(s).\n")
+
+    coll = pipeline.get_collection()
+    ingested, skipped = 0, 0
+
+    for i, url in enumerate(pdf_urls, 1):
+        print(f"[{i}/{len(pdf_urls)}] {url}")
+        try:
+            text = pdf_sources.load_pdf_text(url)
+        except Exception as e:  # network error, corrupt PDF, etc. — skip, don't crash
+            print(f"      WARNING: failed to download/extract ({e}) — skipping.")
+            skipped += 1
+            continue
+
+        if not text.strip():
+            print("      WARNING: no text extracted (scanned/image-only?) — skipping.")
+            skipped += 1
+            continue
+
+        docs = ingest.build_docs_from_pdf(text, source_url=url)
+        pipeline.add_documents(coll, docs)
+        print(f"      ingested {len(docs)} chunk(s).")
+        ingested += 1
+
+        if i < len(pdf_urls):
+            time.sleep(REQUEST_DELAY)  # be polite between requests
+
+    print("\n" + "=" * 60)
+    print("Crawl summary")
+    print("=" * 60)
+    print(f"  PDFs found:    {len(pdf_urls)}")
+    print(f"  PDFs ingested: {ingested}")
+    print(f"  PDFs skipped:  {skipped}")
+    print(f"  Collection '{config.COLLECTION}' now holds {coll.count()} items")
+    print(f"  (persisted to {config.CHROMA_DIR})")
+
+
+if __name__ == "__main__":
+    main()
