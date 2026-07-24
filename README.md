@@ -1,202 +1,135 @@
-# Agri KG-RAG — Starter Ingestion Pipeline
+# agri-kg-rag
 
-A minimal, **runnable** skeleton for the data-ingestion part of the Dynamic
-KG-RAG agricultural advisor. It pulls from **two sources** and loads them into a
-**vector database (Chroma)** that you can query.
+Data layer for an agricultural advisory system. It pulls crop prices and ICAR
+advisory PDFs, embeds them into a vector store, and answers a question by
+returning the most relevant chunks, ordered by a trust score rather than raw
+vector distance.
 
-- **Source 1 — Agmarknet** (crop prices) via the official **data.gov.in API**
-- **Source 2 — ICAR** advisory text (a local sample now; real scraping when you go live)
+Despite the name there's no knowledge graph yet and no LLM writing answers.
+`query.py` prints the chunks an answer step would be handed.
 
-The goal is to help you *get a hang of the whole flow* fast, then extend it.
+![architecture](docs/architecture.svg)
 
----
+## Sources
 
-## What actually happens (the flow in one picture)
+Prices come from the data.gov.in Agmarknet resource API. Advisories are PDFs
+crawled off ICAR's journal platform at epubs.icar.org.in.
 
-```
-  Agmarknet API ─┐
-                 ├─▶ clean ─▶ (chunk text / templatize prices) ─▶ embed ─▶ Chroma ─▶ query
-  ICAR text ─────┘                                                          (vector DB)
-```
+The crawler isn't tied to one journal. Give it an archive URL, an issue, a
+single article, or a direct PDF galley and it resolves down to the article PDFs
+either way. Indian Farming and Indian Horticulture both work as-is.
 
-"Embed" = turn text into a list of numbers (a *vector*) that captures its
-meaning. The vector DB stores these and, at query time, finds the chunks whose
-vectors are closest to your question's vector. That's retrieval. In the full
-system those retrieved chunks get handed to an LLM to write the final answer —
-this starter stops at retrieval so you can see the raw material clearly.
-
----
-
-## Prerequisites (so you're not lost)
-
-### Concepts to be comfortable with (you can learn as you go)
-- **Embedding** — text → vector of numbers representing meaning. You *call* a
-  model to do this; you don't need to understand the ML inside it.
-- **Vector database** — stores those vectors and finds "nearest" (most similar)
-  ones. Best for **unstructured text** (advisories), not for exact number
-  lookups (prices) — see the note below.
-- **Chunking** — splitting a long document into small overlapping pieces so
-  retrieval is sharp.
-- **RAG** — Retrieve relevant chunks, then let an LLM reason over them.
-- **Structured vs unstructured data** — prices are structured (rows/numbers);
-  advisories are unstructured (prose). This starter handles both.
-
-### Software to have installed
-- **Python 3.10+**
-- **A code editor** — VS Code recommended
-- **Git** (to clone / hand to Claude Code later)
-- Basic command-line comfort (run a script, activate a virtual environment)
-
-### Python skills that are enough
-Running a script, editing a file, `pip install`, and reading dicts/lists/JSON.
-**No machine-learning background needed.**
-
-### One account to create
-A **free data.gov.in API key** — register at https://data.gov.in
-(My Account → Generate API Key). Not needed for the offline demo below.
-
----
-
-## Quickstart (offline — get a win in 2 minutes)
+## Setup
 
 ```bash
-# 1. create an isolated environment
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# 2. install dependencies
+source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-# 3. run the pipeline on bundled SAMPLE data with fake embeddings
-#    (no API key, no model download — just proves it all wires up)
+Two environment flags control ingestion:
+
+* `USE_SAMPLE=1` reads bundled sample data and never touches the network.
+  `USE_SAMPLE=0` hits the live API and needs `DATA_GOV_API_KEY`.
+* `USE_DUMMY_EMBEDDINGS=1` swaps in hash-based fake vectors so you can test the
+  plumbing with no model download. Rankings are meaningless while it's on.
+
+The data.gov.in key is free (My Account → Generate API Key) and only needed for
+live prices.
+
+## Running it
+
+Offline, no key, no model download:
+
+```bash
 USE_SAMPLE=1 USE_DUMMY_EMBEDDINGS=1 python ingest.py
 USE_DUMMY_EMBEDDINGS=1 python query.py "price of wheat in Patna"
 ```
 
-> ⚠️ With `USE_DUMMY_EMBEDDINGS=1` the ranking is **random junk** — the fake
-> vectors carry no meaning, so a rice row might top a wheat query. That's
-> expected. It only proves the plumbing. Real ranking appears in the next step.
-
----
-
-## Run it "for real" (real embeddings, still sample prices)
-
-Drop the dummy flag so the real embedding model loads (downloads ~80 MB once):
+Real embeddings (fetches ~80 MB the first time):
 
 ```bash
 USE_SAMPLE=1 python ingest.py
 python query.py "why are my wheat leaves turning yellow"
 ```
 
-Now retrieval is **semantic** — the nitrogen-deficiency advisory chunk should
-rise to the top for that question. This is the moment the system "gets it".
-
----
-
-## Go fully live (real Agmarknet prices)
+Live prices:
 
 ```bash
-cp .env.example .env
-# edit .env and paste your data.gov.in key, then:
-export DATA_GOV_API_KEY=$(grep DATA_GOV_API_KEY .env | cut -d= -f2)
-
+export DATA_GOV_API_KEY=...
 USE_SAMPLE=0 python ingest.py
-python query.py "onion price today"
 ```
 
-`sources.fetch_agmarknet()` calls the data.gov.in resource API. Adjust `limit`,
-or add `filters[commodity]=Wheat` style params, to control what you pull.
-**Confirm the resource ID** in `config.py` on the portal — data.gov.in
-occasionally reissues it.
+Crawling advisories:
 
-### Adding real ICAR text
-`sources.scrape_icar_page(url)` shows the BeautifulSoup pattern. To use it,
-call it in `ingest.py` instead of `load_icar_text()`, e.g.:
+```bash
+# three most recent issues of a journal
+python crawl_icar.py "https://epubs.icar.org.in/index.php/IndFarm/issue/archive" --limit 3
 
-```python
-icar_text = sources.scrape_icar_page("https://icar.org.in/some-advisory-page")
+# or a single issue, article, or galley
+python crawl_icar.py "https://epubs.icar.org.in/index.php/IndHort/issue/view/<id>"
 ```
 
-Real government pages are messy — you'll tune which tags to strip per site.
-Always set a User-Agent, add a short delay between requests, and check the
-site's `robots.txt`. (For PDF advisories, extract text first with a PDF library,
-then feed the string to `build_docs_from_icar`.)
+PDFs are cached under `cache/`, so re-runs skip the network. Scanned PDFs with
+no extractable text get skipped with a warning instead of killing the run.
 
----
+Re-running ingest is safe. Ids are a sha256 of source plus chunk index and
+writes are upserts, so a document overwrites itself rather than piling up.
+Delete `chroma_db/` to start from nothing.
 
-## About prices in a vector DB (important nuance)
+## The verification score
 
-Price tables are **structured** and ideally live in a SQL table or the
-knowledge graph (Neo4j) so you can do exact queries like "max wheat price in
-Bihar today". This starter turns each price row into a **sentence**
-(`price_to_text`) so it flows through the same RAG pipeline — great for learning
-and for answering fuzzy questions, but not a substitute for structured storage
-in the final system. Keep both in mind; both are legitimate.
-
----
-
-## File map
-
-| File | What it does |
-|------|--------------|
-| `config.py` | Settings + **source reliability metadata** (the key tie-in) |
-| `sources.py` | Fetch Agmarknet (API) + load/scrape ICAR text |
-| `pipeline.py` | clean → chunk → embed → store/query (the core machinery) |
-| `ingest.py` | Runs everything; builds docs with metadata; loads the DB |
-| `query.py` | Ask a question, see retrieved chunks + their source/reliability |
-| `sample_data/` | Offline sample price JSON + illustrative ICAR advisory |
-
----
-
-## Why your part matters (connect it to the big project)
-
-Every chunk you store carries a `reliability` value (see `config.SOURCES`).
-That is **exactly** the `Reliability` term in the project's verification score:
+Retrieved chunks get reordered by
 
 ```
-S(f) = w1*Agreement + w2*Reliability + w3*Recency + w4*Confidence
+S = w1*agreement + w2*reliability + w3*recency + w4*confidence
 ```
 
-Because you attach it at ingestion, the verification module can read it directly
-instead of hardcoding source trust later. Same goes for the `ingested_at`
-timestamp (feeds *Recency*) and, if you add conflict detection at ingestion
-(e.g. Agmarknet vs eNAM disagree), that feeds *Agreement*. So "just loading
-data" is really building the foundation the verification innovation stands on.
+Reliability is set per source in `config.SOURCES` and attached to every chunk at
+write time. Recency decays from the ingest timestamp on a 365-day half life.
+Confidence comes off the Chroma distance.
 
----
+Agreement is fixed at 0.5. Computing it properly needs a second independent
+source corroborating the same fact, and there isn't one yet, so it's a
+placeholder rather than a number. `query.py` prints every term's raw value and
+weighted contribution, so it's always clear where a score came from.
 
-## Suggested 3-day plan
+One thing worth knowing: on the current corpus reliability and recency don't
+discriminate at all. Everything is ICAR at 0.98, ingested in one batch, so
+confidence does all the work. The score only starts earning its keep once a
+second source with a different reliability profile exists.
 
-**Day 1 — Environment + understand the flow.**
-Install Python + VS Code, create the venv, `pip install -r requirements.txt`,
-run the offline quickstart. Then read the five `.py` files **in this order**:
-`config → sources → pipeline → ingest → query`. By end of day you should be
-able to explain embedding, chunking, and retrieval in your own words. Register
-on data.gov.in and get your API key.
+## Files
 
-**Day 2 — Go live with Agmarknet.**
-Drop the dummy flag (real embeddings), then `USE_SAMPLE=0` with your key.
-Confirm real prices flow in and that `query.py` returns sensible results.
-Experiment: change `limit`, filter by a commodity or state, pull a couple of
-days of data.
+| file | does |
+|---|---|
+| `config.py` | settings, source reliability |
+| `sources.py` | Agmarknet fetch, local ICAR text |
+| `pdf_sources.py` | download, cache and extract a PDF |
+| `crawl_icar.py` | walk an OJS journal, ingest every article |
+| `pipeline.py` | clean, chunk, embed, store, query |
+| `ingest.py` | orchestrates a run, attaches metadata |
+| `query.py` | ask, re-rank, print |
+| `verification.py` | the score |
 
-**Day 3 — Add real ICAR text + write up.**
-Scrape one or two real ICAR/Krishi pages with `scrape_icar_page` (or drop in a
-few real advisory text/PDF files), re-ingest, and test retrieval across both
-sources. Then write a short note: what you built, and how the reliability +
-timestamp metadata plugs into the verification module. Hand the repo to **Claude
-Code** to extend to more sources (eNAM, IMD, etc.).
+`.venv/`, `chroma_db/` and `cache/` are gitignored.
 
----
+## Not built
 
-## Troubleshooting
+* LLM answer generation. Retrieval stops at returning chunks.
+* The knowledge graph. Prices sit in the vector store as templated sentences,
+  which is a shortcut. Exact numeric lookups belong in SQL or Neo4j.
+* A real agreement term.
 
-- **First real run is slow / seems stuck** — it's downloading the embedding
-  model (~80 MB) once. Later runs are fast.
-- **`sentence-transformers` download fails** — you need internet to huggingface
-  on first run; a locked-down network will block it.
-- **API returns very few rows** — the public/demo data.gov.in key is capped;
-  use your own registered key and raise `limit`.
-- **`ModuleNotFoundError`** — activate the venv, then reinstall requirements.
-- **Weird/irrelevant ranking** — you probably still have
-  `USE_DUMMY_EMBEDDINGS=1` set. Unset it for real results.
+## If something breaks
+
+First real run hangs for a minute: it's fetching the embedding model, once.
+
+Very few price rows: the public demo key is capped, register your own.
+
+Odd rankings: `USE_DUMMY_EMBEDDINGS` is probably still set.
+
+`ModuleNotFoundError`: the venv isn't active.
+
+Crawler skips a PDF: scanned/image-only, or the URL served HTML. The run
+continues past it.
